@@ -53,10 +53,32 @@
       <object class="GtkButton">
         <property name="focusable">True</property>
         <property name="focus-on-click">False</property>
-        <property name="tooltip-text" translatable="yes">Sketch Reference Dimension (D)</property>
+        <property name="tooltip-text" translatable="yes">Sketch Dimension Overlay (D)</property>
         <property name="action-name">win.sketch-dimension</property>
         <property name="has-frame">False</property>
         <property name="icon-name">tool-measure</property>
+        <style><class name="priority1"/></style>
+      </object>
+    </child>
+    <child>
+      <object class="GtkButton">
+        <property name="focusable">True</property>
+        <property name="focus-on-click">False</property>
+        <property name="tooltip-text" translatable="yes">Fillet Selected Corners (A)</property>
+        <property name="action-name">win.sketch-fillet</property>
+        <property name="has-frame">False</property>
+        <property name="icon-name">fillet-chamfer</property>
+        <style><class name="priority1"/></style>
+      </object>
+    </child>
+    <child>
+      <object class="GtkButton">
+        <property name="focusable">True</property>
+        <property name="focus-on-click">False</property>
+        <property name="tooltip-text" translatable="yes">Chamfer Selected Corners (Z)</property>
+        <property name="action-name">win.sketch-chamfer</property>
+        <property name="has-frame">False</property>
+        <property name="icon-name">fillet-chamfer</property>
         <style><class name="priority1"/></style>
       </object>
     </child>

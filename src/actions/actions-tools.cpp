@@ -11,13 +11,24 @@
 #include <giomm.h>  // Not <gtkmm.h>! To eventually allow a headless version!
 #include <glibmm/i18n.h>
 
+#include <algorithm>
+#include <cmath>
+#include <optional>
+#include <vector>
+
+#include <2geom/bezier-curve.h>
+#include <2geom/path.h>
+#include <2geom/point.h>
+
 #include "actions-tools.h"
 #include "actions-helper.h"
 
 #include "inkscape-application.h"
 #include "inkscape-window.h"
 #include "message-context.h"
+#include "document-undo.h"
 #include "preferences.h"
+#include "selection.h"
 
 #include "object/box3d.h"
 #include "object/sp-ellipse.h"
@@ -33,7 +44,9 @@
 #include "ui/dialog/dialog-container.h"
 #include "ui/dialog/dialog-manager.h"
 #include "ui/dialog/inkscape-preferences.h"
+#include "ui/icon-names.h"
 #include "ui/tools/connector-tool.h"
+#include "ui/tools/measure-tool.h"
 #include "ui/tools/text-tool.h"
 #include "ui/tools/tool-data.h"
 
@@ -316,8 +329,163 @@ void sketch_center_rectangle(InkscapeWindow *win)
 
 void sketch_dimension(InkscapeWindow *win)
 {
+    auto desktop = win->get_desktop();
+    if (!desktop) {
+        return;
+    }
     tool_switch("Measure", win);
     Inkscape::Preferences::get()->setBool("/tools/measure/sketch-dimension", true);
+    if (auto measure = dynamic_cast<Inkscape::UI::Tools::MeasureTool *>(desktop->getTool())) {
+        measure->measureSelectedItem();
+    }
+}
+
+struct CornerCut
+{
+    Geom::Point entry;
+    Geom::Point vertex;
+    Geom::Point exit;
+};
+
+std::optional<Geom::Path> corner_path(Geom::Path const &source, bool chamfer)
+{
+    if (source.empty()) {
+        return std::nullopt;
+    }
+
+    std::vector<Geom::Point> nodes;
+    nodes.push_back(source.initialPoint());
+    for (auto curve = source.begin(); curve != source.end_open(); ++curve) {
+        if (!dynamic_cast<Geom::LineSegment const *>(&*curve)) {
+            return std::nullopt;
+        }
+        nodes.push_back(curve->finalPoint());
+    }
+
+    bool const closed = source.closed();
+    if (closed && nodes.size() > 1 && Geom::are_near(nodes.front(), nodes.back())) {
+        nodes.pop_back();
+    }
+    if (nodes.size() < (closed ? 3 : 3)) {
+        return std::nullopt;
+    }
+
+    std::vector<CornerCut> cuts(nodes.size());
+    for (std::size_t i = 0; i < nodes.size(); ++i) {
+        if (!closed && (i == 0 || i + 1 == nodes.size())) {
+            cuts[i] = {nodes[i], nodes[i], nodes[i]};
+            continue;
+        }
+
+        auto const &prev = nodes[(i + nodes.size() - 1) % nodes.size()];
+        auto const &vertex = nodes[i];
+        auto const &next = nodes[(i + 1) % nodes.size()];
+        double const before = Geom::distance(prev, vertex);
+        double const after = Geom::distance(vertex, next);
+        if (before < 1e-6 || after < 1e-6) {
+            return std::nullopt;
+        }
+        double const amount = std::min({10.0, before * 0.25, after * 0.25});
+        cuts[i] = {
+            vertex + (prev - vertex) * (amount / before),
+            vertex,
+            vertex + (next - vertex) * (amount / after)
+        };
+    }
+
+    auto append_corner = [chamfer](Geom::Path &path, CornerCut const &cut) {
+        if (chamfer) {
+            path.appendNew<Geom::LineSegment>(cut.exit);
+        } else {
+            auto const control1 = cut.entry + (cut.vertex - cut.entry) * (2.0 / 3.0);
+            auto const control2 = cut.exit + (cut.vertex - cut.exit) * (2.0 / 3.0);
+            path.appendNew<Geom::CubicBezier>(control1, control2, cut.exit);
+        }
+    };
+
+    if (closed) {
+        Geom::Path result(cuts.front().entry);
+        append_corner(result, cuts.front());
+        for (std::size_t i = 1; i < cuts.size(); ++i) {
+            result.appendNew<Geom::LineSegment>(cuts[i].entry);
+            append_corner(result, cuts[i]);
+        }
+        result.close(true);
+        return result;
+    }
+
+    Geom::Path result(nodes.front());
+    for (std::size_t i = 1; i + 1 < cuts.size(); ++i) {
+        result.appendNew<Geom::LineSegment>(cuts[i].entry);
+        append_corner(result, cuts[i]);
+    }
+    result.appendNew<Geom::LineSegment>(nodes.back());
+    return result;
+}
+
+void sketch_corner_operation(InkscapeWindow *win, bool chamfer)
+{
+    auto desktop = win->get_desktop();
+    if (!desktop) {
+        return;
+    }
+    auto selection = desktop->getSelection();
+    if (!selection || selection->isEmpty()) {
+        desktop->messageStack()->flash(Inkscape::WARNING_MESSAGE,
+            _("Select a rectangle or straight-edged path first."));
+        return;
+    }
+
+    for (auto item : selection->items()) {
+        if (!is<SPRect>(item) && !is<SPPath>(item)) {
+            desktop->messageStack()->flash(Inkscape::WARNING_MESSAGE,
+                _("Fillet and chamfer currently support rectangles and straight-edged paths."));
+            return;
+        }
+    }
+
+    selection->toCurves(true);
+    bool changed = false;
+    for (auto item : selection->items()) {
+        auto path = cast<SPPath>(item);
+        if (!path || !path->curve()) {
+            continue;
+        }
+        Geom::PathVector result;
+        bool supported = true;
+        for (auto const &subpath : *path->curve()) {
+            auto converted = corner_path(subpath, chamfer);
+            if (!converted) {
+                supported = false;
+                break;
+            }
+            result.push_back(std::move(*converted));
+        }
+        if (supported && !result.empty()) {
+            path->setCurve(std::move(result));
+            path->updateRepr();
+            changed = true;
+        }
+    }
+
+    if (changed) {
+        Inkscape::DocumentUndo::done(desktop->getDocument(),
+            chamfer ? RC_("Undo", "Chamfer corners") : RC_("Undo", "Fillet corners"),
+            INKSCAPE_ICON("fillet-chamfer"));
+    } else {
+        desktop->messageStack()->flash(Inkscape::WARNING_MESSAGE,
+            _("The selected path must contain only straight segments."));
+    }
+}
+
+void sketch_fillet(InkscapeWindow *win)
+{
+    sketch_corner_operation(win, false);
+}
+
+void sketch_chamfer(InkscapeWindow *win)
+{
+    sketch_corner_operation(win, true);
 }
 
 } // namespace
@@ -368,7 +536,9 @@ std::vector<std::vector<Glib::ustring>> raw_data_sketch =
     {"win.sketch-circle",           N_("Sketch Circle"),           SECTION_SKETCH, N_("Draw a circle from its center and radius")        },
     {"win.sketch-corner-rectangle", N_("Sketch Corner Rectangle"), SECTION_SKETCH, N_("Draw a rectangle from two opposite corners")      },
     {"win.sketch-center-rectangle", N_("Sketch Center Rectangle"), SECTION_SKETCH, N_("Draw a rectangle from its center and one corner") },
-    {"win.sketch-dimension",        N_("Sketch Dimension"),        SECTION_SKETCH, N_("Draw a persistent reference dimension")            }
+    {"win.sketch-dimension",        N_("Sketch Dimension"),        SECTION_SKETCH, N_("Show a temporary canvas dimension")                 },
+    {"win.sketch-fillet",           N_("Sketch Fillet"),           SECTION_SKETCH, N_("Round selected corners without a path effect")       },
+    {"win.sketch-chamfer",          N_("Sketch Chamfer"),          SECTION_SKETCH, N_("Clip selected corners without a path effect")        }
     // clang-format on
 };
 
@@ -384,6 +554,8 @@ add_actions_tools(InkscapeWindow* win)
     win->add_action("sketch-corner-rectangle", sigc::bind(sigc::ptr_fun(&sketch_corner_rectangle), win));
     win->add_action("sketch-center-rectangle", sigc::bind(sigc::ptr_fun(&sketch_center_rectangle), win));
     win->add_action("sketch-dimension",        sigc::bind(sigc::ptr_fun(&sketch_dimension),        win));
+    win->add_action("sketch-fillet",           sigc::bind(sigc::ptr_fun(&sketch_fillet),           win));
+    win->add_action("sketch-chamfer",          sigc::bind(sigc::ptr_fun(&sketch_chamfer),          win));
     // clang-format on
 
     auto app = InkscapeApplication::instance();

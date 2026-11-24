@@ -6,18 +6,27 @@ This branch adds the first native sketch-workflow milestone to Inkscape 1.5-dev:
 - `C` — center-to-radius snapped circle
 - `R` — corner rectangle
 - `G` — center-origin rectangle
-- `D` — persistent reference dimension graphics
+- `D` — non-document dimension overlay for a selected circle or single straight segment
+- `A` — fillet every eligible corner of selected rectangles or straight-edged paths
+- `Z` — chamfer every eligible corner of selected rectangles or straight-edged paths
 - matching buttons at the start of the Commands Bar
 
-The dimensions are SVG annotations, not associative or driving CAD constraints. Persistent
-horizontal, vertical, coincident, parallel, and equal relations require a constraint model and
-solver and are a later milestone. Native non-LPE fillet/chamfer and power trim follow that work.
+Dimension overlays are canvas UI only: they do not add lines or text to the SVG. A selected circle
+shows its diameter and a selected one-segment path shows its length. They are reference measurements,
+not associative or driving CAD dimensions.
+
+Fillet and chamfer directly rewrite the selected geometry in one undoable operation; they do not use
+Live Path Effects. The current first pass uses an automatic corner size (up to 10 document units and
+no more than 25% of either adjacent edge) and applies to all eligible corners. Interactive radius and
+per-corner selection are future refinements.
+
+Persistent horizontal, vertical, coincident, parallel, and equal relations still require a constraint
+model and solver. Power trim is also a later milestone.
 
 ## Verified Windows build
 
-The branch completed a full 1,280-step UCRT64/Ninja build and linked successfully. A staged copy
-reported `Inkscape 1.5-dev (2818974, 2026-11-19, custom)` and exported the disposable SVG test to
-PNG with exit code 0.
+The branch completed a full UCRT64/Ninja build and subsequent incremental builds linked successfully.
+A staged copy is kept for disposable interactive testing.
 
 The machine's installed Inkscape was not modified. Build output, staged runtime, test profile, and
 smoke-test output were kept in sibling folders outside this repository.

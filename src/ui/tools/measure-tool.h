@@ -181,6 +181,7 @@ public:
     void toMarkDimension();
     void toItem();
     void reset();
+    bool measureSelectedItem();
     void setMarkers();
     void setMarker(bool isStart);
     Geom::Point readMeasurePoint(bool is_start) const;

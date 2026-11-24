@@ -16,6 +16,7 @@
 
 #include <cmath>
 #include <iomanip>
+#include <optional>
 
 #include <2geom/path-intersection.h>
 #include <2geom/elliptical-arc.h>
@@ -37,6 +38,7 @@
 #include "object/sp-defs.h"
 #include "object/sp-ellipse.h"
 #include "object/sp-flowtext.h"
+#include "object/sp-path.h"
 #include "object/sp-root.h"
 #include "object/sp-text.h"
 
@@ -609,6 +611,51 @@ void MeasureTool::reverseKnots()
     showCanvasItems();
 }
 
+bool MeasureTool::measureSelectedItem()
+{
+    auto selection = _desktop ? _desktop->getSelection() : nullptr;
+    auto item = selection ? selection->singleItem() : nullptr;
+    if (!item) {
+        return false;
+    }
+
+    std::optional<Geom::Point> selected_start;
+    std::optional<Geom::Point> selected_end;
+
+    if (auto ellipse = cast<SPGenericEllipse>(item)) {
+        if (auto bounds = ellipse->desktopGeometricBounds()) {
+            auto center = bounds->midpoint();
+            selected_start = Geom::Point(bounds->left(), center.y());
+            selected_end = Geom::Point(bounds->right(), center.y());
+        }
+    } else if (auto path = cast<SPPath>(item)) {
+        auto curve = path->curve();
+        if (curve && curve->size() == 1 && !curve->front().empty()) {
+            auto const &subpath = curve->front();
+            if (subpath.size_open() == 1) {
+                auto affine = path->i2dt_affine();
+                selected_start = subpath.initialPoint() * affine;
+                selected_end = subpath.finalPoint() * affine;
+            }
+        }
+    }
+
+    if (!selected_start || !selected_end || !selected_start->isFinite() ||
+        !selected_end->isFinite() || *selected_start == *selected_end) {
+        return false;
+    }
+
+    start_p = *selected_start;
+    end_p = *selected_end;
+
+    knot_start->moveto(start_p);
+    knot_end->moveto(end_p);
+    knot_start->show();
+    knot_end->show();
+    showCanvasItems();
+    return true;
+}
+
 void MeasureTool::knotClickHandler(SPKnot *knot, guint state)
 {
     if (mod_measure_knot_dialog->active(state)) {
@@ -844,12 +891,9 @@ bool MeasureTool::root_handler(CanvasEvent const &event)
 
         ungrabCanvasEvents();
 
-        if (Inkscape::Preferences::get()->getBool("/tools/measure/sketch-dimension", false)) {
-            // Sketch dimensions persist immediately on release. They are reference
-            // annotations for now; driving/associative dimensions are a later phase.
-            toMarkDimension();
-            reset();
-        }
+        // Sketch dimensions intentionally remain canvas overlays. Converting them
+        // to SVG line/text objects is available through the normal Measure tool UI,
+        // but the SolidWorks-style shortcut must not alter the document.
     },
     [&] (CanvasEvent const &event) {}
     );

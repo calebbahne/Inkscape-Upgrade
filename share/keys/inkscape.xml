@@ -131,6 +131,8 @@ override) the bindings in the main default.xml.
   <bind gaction="win.sketch-corner-rectangle" keys="r" />
   <bind gaction="win.sketch-center-rectangle" keys="g" />
   <bind gaction="win.sketch-dimension"        keys="d" />
+  <bind gaction="win.sketch-fillet"           keys="a" />
+  <bind gaction="win.sketch-chamfer"          keys="z" />
 
   <!-- Snapping -->
   <bind gaction="win.snap-global-toggle"                 keys="percent"/>
