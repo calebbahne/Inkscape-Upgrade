@@ -12,4 +12,5 @@ if (-not (Test-Path -LiteralPath $inkscape -PathType Leaf)) {
 
 New-Item -ItemType Directory -Path $profile -Force | Out-Null
 $env:INKSCAPE_PROFILE_DIR = $profile
-Start-Process -FilePath $inkscape -ArgumentList @($testDocument)
+$quotedTestDocument = '"' + $testDocument + '"'
+Start-Process -FilePath $inkscape -ArgumentList @($quotedTestDocument)
